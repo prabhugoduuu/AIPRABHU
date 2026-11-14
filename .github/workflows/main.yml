@@ -7,16 +7,58 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: unzip -o prabhu-assistant.zip
+        with:
+          fetch-depth: 0
+
+      - name: Find newest zip and unzip it
+        run: |
+          set -e
+          BEST=""
+          BEST_T=0
+          while IFS= read -r f; do
+            t=$(git log -1 --format=%ct -- "$f")
+            if [ "${t:-0}" -ge "$BEST_T" ]; then
+              BEST="$f"
+              BEST_T="${t:-0}"
+            fi
+          done < <(git ls-files '*.zip')
+
+          if [ -n "$BEST" ]; then
+            echo "Using zip: $BEST"
+            rm -rf _src
+            mkdir _src
+            unzip -oq "$BEST" -d _src
+            SET=$(find _src -type f \( -name settings.gradle.kts -o -name settings.gradle \) | awk '{print length, $0}' | sort -n | head -1 | cut -d' ' -f2-)
+            if [ -z "$SET" ]; then
+              echo "No settings.gradle(.kts) found inside the zip"
+              exit 1
+            fi
+            DIR=$(dirname "$SET")
+          else
+            echo "No zip found, building repo root"
+            DIR=.
+          fi
+
+          echo "PROJECT_DIR=$DIR" >> "$GITHUB_ENV"
+          V=$(grep -h versionName "$DIR/app/build.gradle.kts" 2>/dev/null | head -1 || true)
+          echo "Built from: ${BEST:-repo root} | $V" >> "$GITHUB_STEP_SUMMARY"
+          echo "Built from: ${BEST:-repo root} | $V"
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
+
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
-      - run: gradle assembleDebug --no-daemon
+
+      - name: Build
+        run: |
+          cd "$PROJECT_DIR"
+          gradle assembleDebug --no-daemon
+
       - uses: actions/upload-artifact@v4
         with:
-          name: Prabhu-APK
-          path: app/build/outputs/apk/debug/*.apk
+          name: Prabhu-APK-run${{ github.run_number }}
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
