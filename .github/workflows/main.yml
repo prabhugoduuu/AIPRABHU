@@ -2,63 +2,39 @@ name: Build APK
 on:
   push:
   workflow_dispatch:
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Find newest zip and unzip it
+      - name: Unpack an uploaded project zip (if there is one)
         run: |
-          set -e
-          BEST=""
-          BEST_T=0
-          while IFS= read -r f; do
-            t=$(git log -1 --format=%ct -- "$f")
-            if [ "${t:-0}" -ge "$BEST_T" ]; then
-              BEST="$f"
-              BEST_T="${t:-0}"
-            fi
-          done < <(git ls-files '*.zip')
-
-          if [ -n "$BEST" ]; then
-            echo "Using zip: $BEST"
-            rm -rf _src
-            mkdir _src
-            unzip -oq "$BEST" -d _src
-            SET=$(find _src -type f \( -name settings.gradle.kts -o -name settings.gradle \) | awk '{print length, $0}' | sort -n | head -1 | cut -d' ' -f2-)
-            if [ -z "$SET" ]; then
-              echo "No settings.gradle(.kts) found inside the zip"
-              exit 1
-            fi
-            DIR=$(dirname "$SET")
-          else
-            echo "No zip found, building repo root"
-            DIR=.
+          Z=$(ls -1 *.zip 2>/dev/null | head -n1 || true)
+          if [ -n "$Z" ]; then
+            rm -rf /tmp/up && mkdir /tmp/up && unzip -q "$Z" -d /tmp/up
+            S=$(find /tmp/up -name settings.gradle.kts | head -n1)
+            R=$(dirname "$S")
+            rsync -a --exclude='.github' "$R"/ ./
+            rm -f "$Z"
+            git config user.name "prabhu-bot"
+            git config user.email "prabhu-bot@users.noreply.github.com"
+            git add -A
+            git commit -m "Unpacked project zip" || true
+            git push || true
           fi
-
-          echo "PROJECT_DIR=$DIR" >> "$GITHUB_ENV"
-          V=$(grep -h versionName "$DIR/app/build.gradle.kts" 2>/dev/null | head -1 || true)
-          echo "Built from: ${BEST:-repo root} | $V" >> "$GITHUB_STEP_SUMMARY"
-          echo "Built from: ${BEST:-repo root} | $V"
-
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
-
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
-
-      - name: Build
-        run: |
-          cd "$PROJECT_DIR"
-          gradle assembleDebug --no-daemon
-
+      - run: gradle assembleDebug --no-daemon
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       - uses: actions/upload-artifact@v4
         with:
-          name: Prabhu-APK-run${{ github.run_number }}
-          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
+          name: Prabhu-APK
+          path: app/build/outputs/apk/debug/*.apk
