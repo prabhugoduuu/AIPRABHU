@@ -22,8 +22,15 @@ object AppState { @Volatile var visible = false }
 /** type: "claude", "gemini" or "openai" (any OpenAI-compatible API, uses baseUrl) */
 data class ModelCfg(var name: String, var type: String, var key: String, var modelId: String, var baseUrl: String)
 
-class Msg(val role: String, val text: String, val model: String = "", val hasImage: Boolean = false) {
+/** kind: "image" (data = base64 jpeg), "pdf" (data = base64 pdf, pages = jpeg page images), "text" (data = file text) */
+class Att(val kind: String, val mime: String, val data: String, val name: String) {
+    var pages: List<String> = emptyList()
     var thumb: Bitmap? = null
+}
+
+class Msg(val role: String, val text: String, val model: String = "", val files: String = "") {
+    var thumb: Bitmap? = null
+    var atts: List<Att> = emptyList()   // kept only while the app is open
 }
 
 class Chat(val id: String, var title: String, val msgs: MutableList<Msg> = ArrayList())
@@ -112,7 +119,7 @@ object Store {
                 val ms = o.getJSONArray("msgs")
                 for (j in 0 until ms.length()) {
                     val m = ms.getJSONObject(j)
-                    ch.msgs.add(Msg(m.getString("r"), m.getString("t"), m.optString("m"), m.optBoolean("i")))
+                    ch.msgs.add(Msg(m.getString("r"), m.getString("t"), m.optString("m"), m.optString("f")))
                 }
                 out.add(ch)
             }
@@ -126,7 +133,7 @@ object Store {
             list.take(60).forEach { ch ->
                 val ms = JSONArray()
                 ch.msgs.forEach {
-                    ms.put(JSONObject().put("r", it.role).put("t", it.text).put("m", it.model).put("i", it.hasImage))
+                    ms.put(JSONObject().put("r", it.role).put("t", it.text).put("m", it.model).put("f", it.files))
                 }
                 arr.put(JSONObject().put("id", ch.id).put("title", ch.title).put("msgs", ms))
             }

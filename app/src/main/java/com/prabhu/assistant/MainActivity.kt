@@ -12,6 +12,7 @@ import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.graphics.pdf.PdfRenderer
 import android.media.ExifInterface
 import android.net.Uri
 import android.os.Build
@@ -19,6 +20,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
+import android.provider.OpenableColumns
 import android.provider.Settings
 import android.speech.RecognizerIntent
 import android.speech.tts.TextToSpeech
@@ -38,6 +40,7 @@ import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import java.io.ByteArrayOutputStream
+import java.util.zip.ZipInputStream
 import java.util.Locale
 
 private const val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
@@ -45,6 +48,7 @@ private const val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
 private const val REQ_VOICE = 101
 private const val REQ_CAM = 102
 private const val REQ_PICK = 103
+private const val REQ_FILE = 104
 private const val PERM_MIC = 201
 private const val PERM_MEDIA = 202
 private const val PERM_CAM_NOW = 203
@@ -71,8 +75,8 @@ class MainActivity : Activity() {
     private var chats = ArrayList<Chat>()
     private var cur: Chat? = null
     private var models = ArrayList<ModelCfg>()
-    private var pendingImg: String? = null
-    private var pendingThumb: Bitmap? = null
+    private val pendingAtts = ArrayList<Att>()
+    private lateinit var attachLabel: TextView
     private var camUri: Uri? = null
     private var inVoice = false
     private var voiceFromWake = false
@@ -147,7 +151,7 @@ class MainActivity : Activity() {
             setTurnScreenOn(true)
         }
         showChat()
-        if (cmd.isNotEmpty()) send(cmd, null, null, true) else main.postDelayed({ startVoice(true) }, 350)
+        if (cmd.isNotEmpty()) send(cmd, emptyList(), true) else main.postDelayed({ startVoice(true) }, 350)
     }
 
     private fun wakeCmd(action: String) {
@@ -279,7 +283,8 @@ class MainActivity : Activity() {
         }
         attachImg = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
         attachBar.addView(attachImg, lp(dp(56), dp(56)))
-        attachBar.addView(tv("Photo attached", 14f, cMute).apply { setPadding(dp(12), 0, 0, 0) }, lp(0, WRAP, 1f))
+        attachLabel = tv("", 13f, cMute).apply { setPadding(dp(12), 0, 0, 0); maxLines = 3 }
+        attachBar.addView(attachLabel, lp(0, WRAP, 1f))
         attachBar.addView(iconBtn("✕") { clearAttach() })
         box.addView(attachBar, lpm(0, 8))
 
@@ -469,7 +474,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_HORIZONTAL
         }
         box.addView(tv("Prabhu", 32f, cText, true).apply { gravity = Gravity.CENTER }, lpm(110, 8))
-        box.addView(tv("Ask anything, attach a photo, or say \"Hey Prabhu\".", 15f, cMute).apply {
+        box.addView(tv("Ask anything, attach a photo or PDF, or say \"Hey Prabhu\".", 15f, cMute).apply {
             gravity = Gravity.CENTER
         }, lpm(0, 0))
         return box
@@ -498,8 +503,10 @@ class MainActivity : Activity() {
                 scaleType = ImageView.ScaleType.FIT_CENTER
             }
             box.addView(iv, LinearLayout.LayoutParams(WRAP, WRAP).apply { bottomMargin = dp(6); gravity = Gravity.END })
-        } else if (m.hasImage) {
-            box.addView(tv("📷 Photo", 12f, cMute), LinearLayout.LayoutParams(WRAP, WRAP).apply { gravity = Gravity.END })
+        }
+        if (m.files.isNotBlank()) {
+            box.addView(tv("📎 " + m.files, 12f, cMute),
+                LinearLayout.LayoutParams(WRAP, WRAP).apply { gravity = Gravity.END; bottomMargin = dp(4) })
         }
         val bubble = tv(m.text, 16f, cText).apply {
             background = rounded(cSurface2, 0, 18)
@@ -537,11 +544,11 @@ class MainActivity : Activity() {
     private fun onSend() {
         if (busy) return
         val t = input.text.toString().trim()
-        if (t.isEmpty() && pendingImg == null) return
-        send(t, pendingImg, pendingThumb, false)
+        if (t.isEmpty() && pendingAtts.isEmpty()) return
+        send(t, pendingAtts, false)
     }
 
-    private fun send(text: String, img: String?, thumb: Bitmap?, spoken: Boolean) {
+    private fun send(text: String, atts: List<Att>, spoken: Boolean) {
         if (busy) return
         models = ArrayList(Store.models(this))
         if (models.none { it.key.isNotBlank() }) {
@@ -549,7 +556,8 @@ class MainActivity : Activity() {
             showSettings()
             return
         }
-        val body = if (text.isBlank()) "What is in this image?" else text
+        val body = if (text.isNotBlank()) text
+            else if (atts.any { it.kind != "image" }) "Summarize this file." else "What is in this image?"
         val chat: Chat = cur ?: Chat(System.currentTimeMillis().toString(), "New chat").also {
             chats.add(0, it); cur = it
         }
@@ -557,8 +565,9 @@ class MainActivity : Activity() {
             chat.title = body.take(40)
             msgList.removeAllViews()
         }
-        val um = Msg("user", body, "", img != null)
-        um.thumb = thumb
+        val um = Msg("user", body, "", atts.joinToString(", ") { it.name })
+        um.thumb = atts.firstOrNull { it.thumb != null }?.thumb
+        um.atts = ArrayList(atts)
         chat.msgs.add(um)
         Store.saveChats(this, chats)
         addMsgView(um)
@@ -577,7 +586,7 @@ class MainActivity : Activity() {
         val snapshot = ArrayList(chat.msgs)
         val snapModels = ArrayList(models)
         Thread {
-            val r = Ai.ask(snapModels, active, fb, snapshot, img, spoken)
+            val r = Ai.ask(snapModels, active, fb, snapshot, spoken)
             runOnUiThread { onReply(chat, thinking, r, spoken) }
         }.start()
     }
@@ -623,9 +632,15 @@ class MainActivity : Activity() {
 
     private fun attachMenu() {
         AlertDialog.Builder(this, dlgTheme)
-            .setItems(arrayOf("Take a photo", "Choose a photo")) { _, i ->
+            .setItems(arrayOf("Take a photo", "Choose a photo", "Choose a file (PDF, Word, text)")) { _, i ->
                 if (i == 0) {
                     if (camOk()) launchCamera() else requestPermissions(arrayOf(Manifest.permission.CAMERA), PERM_CAM_NOW)
+                } else if (i == 2) {
+                    val f = Intent(Intent.ACTION_GET_CONTENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE)
+                        .putExtra(Intent.EXTRA_MIME_TYPES, arrayOf(
+                            "application/pdf", "text/*", "application/json", "application/octet-stream",
+                            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"))
+                    startActivityForResult(f, REQ_FILE)
                 } else {
                     val p = Intent(Intent.ACTION_GET_CONTENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE)
                     startActivityForResult(p, REQ_PICK)
@@ -663,7 +678,7 @@ class MainActivity : Activity() {
                 if (res == RESULT_OK) {
                     val t = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.trim().orEmpty()
                     if (t.isNotEmpty()) {
-                        if (fromWake) send(t, null, null, true)
+                        if (fromWake) send(t, emptyList(), true)
                         else {
                             val old = input.text.toString()
                             input.setText(if (old.isBlank()) t else "$old $t")
@@ -680,29 +695,123 @@ class MainActivity : Activity() {
                     else try { contentResolver.delete(u, null, null) } catch (e: Exception) { }
                 }
             }
-            REQ_PICK -> if (res == RESULT_OK) data?.data?.let { attachUri(it) }
+            REQ_PICK, REQ_FILE -> if (res == RESULT_OK) data?.data?.let { attachUri(it) }
         }
     }
 
     private fun attachUri(uri: Uri) {
         Thread {
-            val r = decode(uri)
+            val a = readAtt(uri)
             runOnUiThread {
-                if (r == null) toast("Couldn't read that image")
-                else {
-                    pendingImg = r.first
-                    pendingThumb = r.second
-                    attachImg.setImageBitmap(r.second)
-                    attachBar.visibility = View.VISIBLE
-                }
+                if (a == null) toast("Couldn't read that file. Supported: images, PDF, Word (.docx), text")
+                else { pendingAtts.add(a); refreshAttachBar() }
             }
         }.start()
     }
 
+    private fun refreshAttachBar() {
+        if (pendingAtts.isEmpty()) { attachBar.visibility = View.GONE; return }
+        val th = pendingAtts.firstOrNull { it.thumb != null }?.thumb
+        if (th != null) { attachImg.setImageBitmap(th); attachImg.visibility = View.VISIBLE }
+        else attachImg.visibility = View.GONE
+        attachLabel.text = pendingAtts.joinToString("\n") { "📎 " + it.name }
+        attachBar.visibility = View.VISIBLE
+    }
+
     private fun clearAttach() {
-        pendingImg = null
-        pendingThumb = null
+        pendingAtts.clear()
         attachBar.visibility = View.GONE
+    }
+
+    private fun displayName(uri: Uri): String {
+        var n = ""
+        try {
+            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+                if (it.moveToFirst()) n = it.getString(0) ?: ""
+            }
+        } catch (e: Exception) { }
+        return n.ifBlank { uri.lastPathSegment ?: "file" }
+    }
+
+    private fun readLimited(uri: Uri, max: Int): ByteArray? {
+        contentResolver.openInputStream(uri)?.use { s ->
+            val out = ByteArrayOutputStream()
+            val buf = ByteArray(16384)
+            while (true) {
+                val n = s.read(buf)
+                if (n < 0) break
+                out.write(buf, 0, n)
+                if (out.size() > max) return null
+            }
+            return out.toByteArray()
+        }
+        return null
+    }
+
+    private fun readAtt(uri: Uri): Att? {
+        val name = displayName(uri)
+        val lower = name.lowercase()
+        val mime = contentResolver.getType(uri) ?: ""
+        val textExt = listOf(".txt", ".md", ".csv", ".json", ".xml", ".html", ".log", ".py", ".kt", ".java", ".js", ".c", ".cpp", ".yml", ".yaml")
+        return try {
+            when {
+                mime.startsWith("image/") || lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") ->
+                    decode(uri)?.let { r -> Att("image", "image/jpeg", r.first, name).also { it.thumb = r.second } }
+                mime == "application/pdf" || lower.endsWith(".pdf") -> readPdf(uri, name)
+                lower.endsWith(".docx") -> readDocx(uri, name)
+                mime.startsWith("text/") || mime == "application/json" || textExt.any { lower.endsWith(it) } -> {
+                    val bytes = readLimited(uri, 3_000_000) ?: return null
+                    Att("text", "text/plain", String(bytes, Charsets.UTF_8).take(80000), name)
+                }
+                else -> null
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun readPdf(uri: Uri, name: String): Att? {
+        val bytes = readLimited(uri, 15 * 1024 * 1024) ?: return null
+        val a = Att("pdf", "application/pdf", Base64.encodeToString(bytes, Base64.NO_WRAP), name)
+        val pages = ArrayList<String>()
+        try {
+            contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                val r = PdfRenderer(pfd)
+                val n = minOf(r.pageCount, 6)
+                for (i in 0 until n) {
+                    val p = r.openPage(i)
+                    val w = 1000
+                    val h = maxOf(1, w * p.height / maxOf(1, p.width))
+                    val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                    bmp.eraseColor(Color.WHITE)
+                    p.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    p.close()
+                    if (i == 0) a.thumb = Bitmap.createScaledBitmap(bmp, 170, maxOf(1, 170 * h / w), true)
+                    val o = ByteArrayOutputStream()
+                    bmp.compress(Bitmap.CompressFormat.JPEG, 80, o)
+                    pages.add(Base64.encodeToString(o.toByteArray(), Base64.NO_WRAP))
+                }
+                r.close()
+            }
+        } catch (e: Exception) { }
+        a.pages = pages
+        return a
+    }
+
+    private fun readDocx(uri: Uri, name: String): Att? {
+        val input = contentResolver.openInputStream(uri) ?: return null
+        var xml = ""
+        ZipInputStream(input).use { z ->
+            var e = z.nextEntry
+            while (e != null) {
+                if (e.name == "word/document.xml") { xml = String(z.readBytes(), Charsets.UTF_8); break }
+                e = z.nextEntry
+            }
+        }
+        if (xml.isEmpty()) return null
+        val text = xml.replace("</w:p>", "\n").replace(Regex("<[^>]+>"), "")
+            .replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").trim().take(80000)
+        return Att("text", "text/plain", text, name)
     }
 
     private fun decode(uri: Uri): Pair<String, Bitmap>? {

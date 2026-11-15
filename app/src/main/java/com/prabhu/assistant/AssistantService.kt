@@ -24,9 +24,11 @@ class AssistantService : Service() {
     private var rec: SpeechRecognizer? = null
     private var running = false
     private var paused = false
+    private var partialWake: Runnable? = null
 
+    // Loose on purpose: a soft voice often comes out as a half-heard word, so "Prabhu" alone is enough.
     private val wake = Regex(
-        "(hello|hallo|helo|hey|hi|హలో|హే)\\s*(prabhu|prabu|prabhoo|probhu|ప్రభు|ప్రభూ)",
+        "(prabhu|prabu|prabhoo|probhu|prabho|prabhav|brabhu|ప్రభు|ప్రభూ|ప్రభ)",
         RegexOption.IGNORE_CASE
     )
 
@@ -38,7 +40,7 @@ class AssistantService : Service() {
             "PAUSE" -> {
                 if (!running) { stopSelf(); return START_NOT_STICKY }
                 paused = true
-                main.removeCallbacksAndMessages(null)
+                clearTimers()
                 stopRec()
                 return START_STICKY
             }
@@ -89,6 +91,11 @@ class AssistantService : Service() {
         rec = null
     }
 
+    private fun clearTimers() {
+        main.removeCallbacksAndMessages(null)
+        partialWake = null
+    }
+
     private fun listen() {
         if (!running || paused) return
         stopRec()
@@ -100,20 +107,33 @@ class AssistantService : Service() {
             override fun onRmsChanged(v: Float) {}
             override fun onBufferReceived(b: ByteArray?) {}
             override fun onEndOfSpeech() {}
-            override fun onPartialResults(b: Bundle?) {}
             override fun onEvent(t: Int, b: Bundle?) {}
             override fun onError(e: Int) { main.post { onRecError(e) } }
+            override fun onPartialResults(b: Bundle?) {
+                val l = b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: return
+                if (l.any { wake.containsMatchIn(it) }) main.post { schedulePartialWake() }
+            }
             override fun onResults(b: Bundle?) {
-                val t = b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: ""
-                main.post { onHeard(t) }
+                val l = b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: ArrayList<String>()
+                main.post { onHeard(l) }
             }
         })
         val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, Store.lang(this@AssistantService))
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
             putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
         }
         r.startListening(i)
+    }
+
+    /** A half-heard "Prabhu" opens the app after a moment, unless the final result arrives first. */
+    private fun schedulePartialWake() {
+        if (!running || paused || partialWake != null) return
+        val t = Runnable { partialWake = null; openApp("") }
+        partialWake = t
+        main.postDelayed(t, 1000)
     }
 
     private fun onRecError(e: Int) {
@@ -127,17 +147,22 @@ class AssistantService : Service() {
         main.postDelayed({ listen() }, wait)
     }
 
-    private fun onHeard(text: String) {
+    private fun onHeard(list: List<String>) {
         if (!running || paused) return
-        val m = wake.find(text)
-        if (m == null) { listen(); return }
-        val rest = text.substring(m.range.last + 1).trim(' ', ',', '.')
-        openApp(if (rest.length > 2) rest else "")
+        partialWake?.let { main.removeCallbacks(it) }
+        partialWake = null
+        for (text in list) {
+            val m = wake.find(text) ?: continue
+            val rest = text.substring(m.range.last + 1).trim(' ', ',', '.')
+            openApp(if (rest.length > 2) rest else "")
+            return
+        }
+        listen()
     }
 
     private fun openApp(cmd: String) {
         paused = true
-        main.removeCallbacksAndMessages(null)
+        clearTimers()
         stopRec()
         val i = Intent(this, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -152,7 +177,7 @@ class AssistantService : Service() {
 
     private fun shutdown() {
         running = false
-        main.removeCallbacksAndMessages(null)
+        clearTimers()
         stopRec()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
