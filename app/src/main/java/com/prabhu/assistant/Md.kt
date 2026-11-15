@@ -8,10 +8,12 @@ import android.text.style.RelativeSizeSpan
 import android.text.style.StyleSpan
 import android.text.style.TypefaceSpan
 
-/** Small markdown renderer: headings, bold, inline code, code blocks, bullets. */
+/** Small markdown renderer: headings, bold, italic, quotes, rules, inline code, code blocks, bullets. */
 object Md {
     private const val F = Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-    private val inline = Regex("\\*\\*(.+?)\\*\\*|`([^`]+)`")
+    private val inline = Regex("\\*\\*(.+?)\\*\\*|`([^`]+)`|(?<![*\\w])\\*([^*\\n]+)\\*(?![*\\w])")
+    private val quote = Regex("^>\\s?")
+    private val rule = Regex("^\\s*(-{3,}|\\*{3,}|_{3,})\\s*$")
     private val head = Regex("^#{1,6}\\s+")
     private val bullet = Regex("^(\\s*)[-*]\\s+")
 
@@ -28,10 +30,16 @@ object Md {
                 sb.setSpan(RelativeSizeSpan(0.92f), start, sb.length, F)
                 continue
             }
+            if (rule.matches(raw)) {
+                sb.append("──────────────────\n")
+                continue
+            }
             var line = raw
             var isHead = false
             val h = head.find(line)
             if (h != null) { line = line.substring(h.range.last + 1); isHead = true }
+            val q = quote.find(line)
+            if (q != null) line = "▎ " + line.substring(q.range.last + 1)
             val b = bullet.find(line)
             if (b != null) line = b.groupValues[1] + "• " + line.substring(b.range.last + 1)
             appendInline(sb, line, codeBg)
@@ -53,6 +61,9 @@ object Md {
             if (m.groups[1] != null) {
                 sb.append(m.groupValues[1])
                 sb.setSpan(StyleSpan(Typeface.BOLD), s, sb.length, F)
+            } else if (m.groups[3] != null) {
+                sb.append(m.groupValues[3])
+                sb.setSpan(StyleSpan(Typeface.ITALIC), s, sb.length, F)
             } else {
                 sb.append(m.groupValues[2])
                 sb.setSpan(TypefaceSpan("monospace"), s, sb.length, F)

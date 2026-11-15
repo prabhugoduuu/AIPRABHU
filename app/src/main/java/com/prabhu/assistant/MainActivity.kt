@@ -52,6 +52,8 @@ private const val REQ_FILE = 104
 private const val PERM_MIC = 201
 private const val PERM_MEDIA = 202
 private const val PERM_CAM_NOW = 203
+private val cUserBg = 0xFF2A3860.toInt()
+private val cDanger = 0x1FFF7B7B
 
 class MainActivity : Activity() {
 
@@ -71,6 +73,10 @@ class MainActivity : Activity() {
     private lateinit var drawer: FrameLayout
     private lateinit var panel: LinearLayout
     private lateinit var historyBox: LinearLayout
+    private lateinit var titleView: TextView
+    private lateinit var sendBtn: TextView
+    private lateinit var micBtn: TextView
+    private lateinit var searchBox: EditText
 
     private var chats = ArrayList<Chat>()
     private var cur: Chat? = null
@@ -221,6 +227,63 @@ class MainActivity : Activity() {
 
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
 
+    private fun watch(f: () -> Unit) = object : android.text.TextWatcher {
+        override fun afterTextChanged(s: android.text.Editable?) { f() }
+        override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+        override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+    }
+
+    private fun avatar(sizeDp: Int) = TextView(this).apply {
+        text = "P"
+        gravity = Gravity.CENTER
+        setTextColor(Color.WHITE)
+        typeface = Typeface.DEFAULT_BOLD
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeDp * 0.45f)
+        background = GradientDrawable(
+            GradientDrawable.Orientation.TL_BR, intArrayOf(0xFF8AA4FF.toInt(), 0xFF5566F0.toInt())
+        ).apply { shape = GradientDrawable.OVAL }
+    }
+
+    private fun bubbleBg(fill: Int, r: Int, small: Int): GradientDrawable {
+        val a = dp(r).toFloat()
+        val b = dp(small).toFloat()
+        return GradientDrawable().apply {
+            setColor(fill)
+            cornerRadii = floatArrayOf(a, a, a, a, b, b, a, a)
+        }
+    }
+
+    private fun updateSendState() {
+        val has = input.text.isNotBlank() || pendingAtts.isNotEmpty()
+        sendBtn.visibility = if (has) View.VISIBLE else View.GONE
+        micBtn.visibility = if (has) View.GONE else View.VISIBLE
+    }
+
+    private fun updateTitle() {
+        val t = cur?.title
+        titleView.text = if (t.isNullOrBlank()) "Prabhu" else t
+    }
+
+    private fun prefill(t: String) {
+        input.setText(t)
+        input.setSelection(input.text.length)
+        input.requestFocus()
+        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
+    }
+
+    private fun copyText(t: String) {
+        val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("Prabhu", t))
+        toast("Copied")
+    }
+
+    private fun shareText(t: String) {
+        try {
+            startActivity(Intent.createChooser(
+                Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, t), "Share"))
+        } catch (e: Exception) { }
+    }
+
     private fun hideKeyboard() {
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(root.windowToken, 0)
     }
@@ -249,13 +312,23 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(8), dp(6), dp(8), dp(6))
         }
-        chip = tv("", 15f, cText, true).apply {
-            background = rounded(cSurface, cLine, 20)
-            setPadding(dp(16), dp(8), dp(16), dp(8))
+        chip = tv("", 12f, cAccent, true).apply {
             maxLines = 1
+            gravity = Gravity.CENTER
+            setPadding(dp(10), dp(2), dp(10), dp(2))
             setOnClickListener { pickModel() }
         }
-        val mid = LinearLayout(this).apply { gravity = Gravity.CENTER; addView(chip) }
+        titleView = tv("Prabhu", 16f, cText, true).apply {
+            maxLines = 1
+            gravity = Gravity.CENTER
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+        val mid = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            addView(titleView, LinearLayout.LayoutParams(WRAP, WRAP))
+            addView(chip, LinearLayout.LayoutParams(WRAP, WRAP))
+        }
         bar.addView(iconBtn("☰") { openDrawer() })
         bar.addView(mid, lp(0, WRAP, 1f))
         bar.addView(iconBtn("✎") { newChat() })
@@ -305,15 +378,18 @@ class MainActivity : Activity() {
                 InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
             setPadding(dp(6), dp(10), dp(6), dp(10))
         }
-        val send = iconBtn("↑") { onSend() }.apply {
+        sendBtn = iconBtn("↑") { onSend() }.apply {
             setTextColor(Color.WHITE)
             typeface = Typeface.DEFAULT_BOLD
             background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(cAccent) }
         }
+        micBtn = iconBtn("🎤") { startVoice(false) }
         row.addView(iconBtn("+") { attachMenu() })
         row.addView(input, lp(0, WRAP, 1f))
-        row.addView(iconBtn("🎤") { startVoice(false) })
-        row.addView(send, lp(dp(40), dp(40)).apply { gravity = Gravity.BOTTOM; bottomMargin = dp(2) })
+        row.addView(micBtn, lp(dp(44), dp(44)).apply { gravity = Gravity.BOTTOM })
+        row.addView(sendBtn, lp(dp(40), dp(40)).apply { gravity = Gravity.BOTTOM; bottomMargin = dp(2); leftMargin = dp(2) })
+        sendBtn.visibility = View.GONE
+        input.addTextChangedListener(watch { updateSendState() })
         box.addView(row, lp(MATCH, WRAP))
         page.addView(box, lp(MATCH, WRAP))
         return page
@@ -331,9 +407,14 @@ class MainActivity : Activity() {
             setPadding(dp(16), dp(28), dp(16), dp(16))
             translationX = -panelW.toFloat()
         }
-        panel.addView(tv("Prabhu", 24f, cText, true), lpm(0, 16))
-        panel.addView(btn("+  New chat", true) { closeDrawer(); newChat() }, lpm(0, 16))
-        panel.addView(tv("Recent", 13f, cMute, true), lpm(4, 6))
+        val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        head.addView(avatar(36), LinearLayout.LayoutParams(dp(36), dp(36)))
+        head.addView(tv("Prabhu", 22f, cText, true).apply { setPadding(dp(10), 0, 0, 0) })
+        panel.addView(head, lpm(0, 16))
+        panel.addView(btn("+  New chat", true) { closeDrawer(); newChat() }, lpm(0, 12))
+        searchBox = field("Search chats", "", false)
+        searchBox.addTextChangedListener(watch { refreshDrawerList() })
+        panel.addView(searchBox, lpm(0, 4))
         historyBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         panel.addView(ScrollView(this).apply { addView(historyBox) }, lp(MATCH, 0, 1f))
         panel.addView(View(this).apply { setBackgroundColor(cLine) }, lp(MATCH, 1))
@@ -377,6 +458,8 @@ class MainActivity : Activity() {
         settingsPage.visibility = View.GONE
         chatPage.visibility = View.VISIBLE
         refreshChip()
+        val c = cur
+        if (c == null || c.msgs.isEmpty()) renderChat()
     }
 
     private fun showSettings() {
@@ -388,6 +471,7 @@ class MainActivity : Activity() {
 
     private fun openDrawer() {
         hideKeyboard()
+        searchBox.setText("")
         refreshDrawerList()
         drawer.visibility = View.VISIBLE
         panel.animate().translationX(0f).setDuration(200).start()
@@ -402,32 +486,82 @@ class MainActivity : Activity() {
 
     private fun refreshDrawerList() {
         historyBox.removeAllViews()
-        if (chats.isEmpty()) {
-            historyBox.addView(tv("No chats yet", 14f, cMute).apply { setPadding(dp(8), dp(8), dp(8), dp(8)) })
+        val q = if (::searchBox.isInitialized) searchBox.text.toString().trim().lowercase() else ""
+        val list = chats.filter { q.isEmpty() || it.title.lowercase().contains(q) }
+        if (list.isEmpty()) {
+            historyBox.addView(tv(if (chats.isEmpty()) "No chats yet" else "No matches", 14f, cMute)
+                .apply { setPadding(dp(8), dp(8), dp(8), dp(8)) })
             return
         }
-        chats.forEach { ch ->
+        val cal = java.util.Calendar.getInstance().apply {
+            set(java.util.Calendar.HOUR_OF_DAY, 0); set(java.util.Calendar.MINUTE, 0)
+            set(java.util.Calendar.SECOND, 0); set(java.util.Calendar.MILLISECOND, 0)
+        }
+        val today = cal.timeInMillis
+        val day = 86_400_000L
+        fun group(ch: Chat): String {
+            val t = ch.id.toLongOrNull() ?: 0L
+            return when {
+                t >= today -> "Today"
+                t >= today - day -> "Yesterday"
+                t >= today - 7 * day -> "Previous 7 days"
+                else -> "Older"
+            }
+        }
+        var last = ""
+        list.forEach { ch ->
+            val g = group(ch)
+            if (g != last) {
+                last = g
+                historyBox.addView(tv(g, 12f, cMute, true), lpm(14, 4))
+            }
             val row = tv(ch.title, 15f, cText).apply {
                 maxLines = 1
                 ellipsize = android.text.TextUtils.TruncateAt.END
                 setPadding(dp(12), dp(12), dp(12), dp(12))
                 if (ch === cur) background = rounded(cSurface2, 0, 10)
                 setOnClickListener { cur = ch; renderChat(); closeDrawer() }
-                setOnLongClickListener {
-                    AlertDialog.Builder(this@MainActivity, dlgTheme)
-                        .setTitle("Delete this chat?")
-                        .setPositiveButton("Delete") { _, _ ->
-                            chats.remove(ch)
-                            if (cur === ch) { cur = null; renderChat() }
-                            Store.saveChats(this@MainActivity, chats)
-                            refreshDrawerList()
-                        }
-                        .setNegativeButton("Cancel", null).show()
-                    true
-                }
+                setOnLongClickListener { chatMenu(ch); true }
             }
             historyBox.addView(row, lp(MATCH, WRAP))
         }
+    }
+
+    private fun chatMenu(ch: Chat) {
+        AlertDialog.Builder(this, dlgTheme)
+            .setTitle(ch.title.take(40))
+            .setItems(arrayOf("Rename", "Delete")) { _, i -> if (i == 0) renameChat(ch) else deleteChat(ch) }
+            .show()
+    }
+
+    private fun renameChat(ch: Chat) {
+        val f = field("Chat name", ch.title, false)
+        val wrap = FrameLayout(this).apply { setPadding(dp(20), dp(8), dp(20), 0); addView(f) }
+        AlertDialog.Builder(this, dlgTheme)
+            .setTitle("Rename chat")
+            .setView(wrap)
+            .setPositiveButton("Save") { _, _ ->
+                val t = f.text.toString().trim()
+                if (t.isNotEmpty()) {
+                    ch.title = t
+                    Store.saveChats(this, chats)
+                    refreshDrawerList()
+                    updateTitle()
+                }
+            }
+            .setNegativeButton("Cancel", null).show()
+    }
+
+    private fun deleteChat(ch: Chat) {
+        AlertDialog.Builder(this, dlgTheme)
+            .setTitle("Delete this chat?")
+            .setPositiveButton("Delete") { _, _ ->
+                chats.remove(ch)
+                if (cur === ch) { cur = null; renderChat() }
+                Store.saveChats(this, chats)
+                refreshDrawerList()
+            }
+            .setNegativeButton("Cancel", null).show()
     }
 
     private fun newChat() {
@@ -441,7 +575,8 @@ class MainActivity : Activity() {
     private fun pickModel() {
         models = ArrayList(Store.models(this))
         if (models.isEmpty()) { showSettings(); return }
-        val names = models.map { it.name } + "Manage models…"
+        val act = Store.active(this)
+        val names = models.mapIndexed { i, m -> (if (i == act) "✓  " else "      ") + m.name } + "Manage models…"
         AlertDialog.Builder(this, dlgTheme)
             .setTitle("Model")
             .setItems(names.toTypedArray()) { _, i ->
@@ -459,12 +594,14 @@ class MainActivity : Activity() {
 
     private fun renderChat() {
         msgList.removeAllViews()
+        updateTitle()
         val c = cur
         if (c == null || c.msgs.isEmpty()) {
             msgList.addView(emptyState())
             return
         }
-        c.msgs.forEach { addMsgView(it) }
+        val lastIdx = c.msgs.lastIndex
+        c.msgs.forEachIndexed { i, m -> addMsgView(m, i == lastIdx) }
         scrollDown()
     }
 
@@ -473,17 +610,57 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
         }
-        box.addView(tv("Prabhu", 32f, cText, true).apply { gravity = Gravity.CENTER }, lpm(110, 8))
-        box.addView(tv("Ask anything, attach a photo or PDF, or say \"Hey Prabhu\".", 15f, cMute).apply {
-            gravity = Gravity.CENTER
-        }, lpm(0, 0))
+        box.addView(avatar(64), LinearLayout.LayoutParams(dp(64), dp(64)).apply { topMargin = dp(48); bottomMargin = dp(16) })
+        val h = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        val greet = when {
+            h < 5 -> "Hello, night owl"
+            h < 12 -> "Good morning"
+            h < 17 -> "Good afternoon"
+            h < 21 -> "Good evening"
+            else -> "Hello, night owl"
+        }
+        box.addView(tv(greet, 26f, cText, true).apply { gravity = Gravity.CENTER }, lpm(0, 4))
+        box.addView(tv("How can I help you today?", 15f, cMute).apply { gravity = Gravity.CENTER }, lpm(0, 24))
+
+        if (Store.models(this).none { it.key.isNotBlank() }) {
+            val card = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                background = rounded(cSurface, cAccent, 16)
+                setPadding(dp(16), dp(14), dp(16), dp(14))
+            }
+            card.addView(tv("No API key yet", 15f, cText, true))
+            card.addView(tv("Add a Gemini, Groq, Claude, OpenAI or any other key to start chatting.", 13f, cMute), lpm(4, 12))
+            card.addView(btn("Add API key", true) { showSettings() })
+            box.addView(card, lpm(0, 20))
+        }
+
+        val sugs = listOf<Pair<String, () -> Unit>>(
+            "📷  Ask about a photo" to { attachMenu() },
+            "📄  Summarize a PDF" to { attachMenu() },
+            "✍️  Write an email" to { prefill("Write a short, polite email about ") },
+            "🌐  Translate to Telugu" to { prefill("Translate to Telugu: ") }
+        )
+        var i = 0
+        while (i < sugs.size) {
+            val r = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            for (j in i..minOf(i + 1, sugs.size - 1)) {
+                val sg = sugs[j]
+                r.addView(tv(sg.first, 14f, cText).apply {
+                    background = rounded(cSurface, cLine, 16)
+                    setPadding(dp(14), dp(16), dp(14), dp(16))
+                    setOnClickListener { sg.second() }
+                }, lp(0, WRAP, 1f).apply { leftMargin = dp(4); rightMargin = dp(4) })
+            }
+            box.addView(r, lpm(0, 8))
+            i += 2
+        }
         return box
     }
 
     private fun scrollDown() { scroll.post { scroll.fullScroll(View.FOCUS_DOWN) } }
 
-    private fun addMsgView(m: Msg): View {
-        val v = if (m.role == "user") userView(m) else assistantView(m.model, m.text)
+    private fun addMsgView(m: Msg, last: Boolean = false): View {
+        val v = if (m.role == "user") userView(m) else assistantView(m.model, m.text, false, last)
         msgList.addView(v)
         return v
     }
@@ -509,7 +686,7 @@ class MainActivity : Activity() {
                 LinearLayout.LayoutParams(WRAP, WRAP).apply { gravity = Gravity.END; bottomMargin = dp(4) })
         }
         val bubble = tv(m.text, 16f, cText).apply {
-            background = rounded(cSurface2, 0, 18)
+            background = bubbleBg(cUserBg, 20, 6)
             setPadding(dp(14), dp(10), dp(14), dp(10))
             maxWidth = (resources.displayMetrics.widthPixels * 0.8f).toInt()
             setTextIsSelectable(true)
@@ -518,24 +695,68 @@ class MainActivity : Activity() {
         return box
     }
 
-    private fun assistantView(model: String, text: String, thinking: Boolean = false): View {
+    private fun assistantView(model: String, text: String, thinking: Boolean = false, last: Boolean = false): View {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = dp(20) }
         }
-        box.addView(tv("✦  $model", 12f, cAccent, true), lpm(0, 6))
-        val body = tv(if (thinking) text else Md.render(text, cSurface2), 16f, if (thinking) cMute else cText).apply {
+        val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        head.addView(avatar(22), LinearLayout.LayoutParams(dp(22), dp(22)))
+        head.addView(tv(model.ifBlank { "Prabhu" }, 12f, cMute, true).apply { setPadding(dp(8), 0, 0, 0) })
+        box.addView(head, lpm(0, 8))
+        if (thinking) {
+            val dots = tv("●  ●  ●", 14f, cAccent)
+            val anim = android.animation.ObjectAnimator.ofFloat(dots, "alpha", 0.2f, 1f).apply {
+                duration = 650
+                repeatMode = android.animation.ValueAnimator.REVERSE
+                repeatCount = android.animation.ValueAnimator.INFINITE
+            }
+            dots.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+                override fun onViewAttachedToWindow(v: View) { if (!anim.isStarted) anim.start() }
+                override fun onViewDetachedFromWindow(v: View) { anim.cancel() }
+            })
+            box.addView(dots, lp(WRAP, WRAP))
+            return box
+        }
+        val body = tv(Md.render(text, cSurface2), 16f, cText).apply {
             setLineSpacing(0f, 1.25f)
-            if (!thinking) setTextIsSelectable(true)
+            setTextIsSelectable(true)
         }
         box.addView(body, lp(MATCH, WRAP))
+        box.addView(actionRow(text, last), lp(MATCH, WRAP))
         return box
     }
 
-    private fun addError(text: String) {
-        msgList.addView(tv(text, 14f, cErr).apply {
-            setPadding(dp(4), 0, dp(4), 0)
-        }, lpm(0, 16))
+    private fun actionRow(text: String, last: Boolean): View {
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        fun act(label: String, f: () -> Unit) {
+            row.addView(tv(label, 12f, cMute).apply {
+                setPadding(0, dp(10), dp(18), dp(4))
+                setOnClickListener { f() }
+            })
+        }
+        act("⧉ Copy") { copyText(text) }
+        act("🔊 Listen") { if (tts?.isSpeaking == true) tts?.stop() else speak(text) }
+        act("⇪ Share") { shareText(text) }
+        if (last) act("↻ Retry") { regenerate() }
+        return row
+    }
+
+    private fun addError(text: String, chat: Chat, spoken: Boolean) {
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = rounded(cDanger, 0, 14)
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+        }
+        card.addView(tv(text, 14f, cErr))
+        card.addView(tv("↻  Try again", 14f, cAccent, true).apply {
+            setPadding(0, dp(12), 0, 0)
+            setOnClickListener {
+                msgList.removeView(card)
+                if (!busy) runAsk(chat, spoken)
+            }
+        })
+        msgList.addView(card, lpm(0, 16))
         scrollDown()
     }
 
@@ -565,6 +786,7 @@ class MainActivity : Activity() {
             chat.title = body.take(40)
             msgList.removeAllViews()
         }
+        updateTitle()
         val um = Msg("user", body, "", atts.joinToString(", ") { it.name })
         um.thumb = atts.firstOrNull { it.thumb != null }?.thumb
         um.atts = ArrayList(atts)
@@ -574,12 +796,18 @@ class MainActivity : Activity() {
         input.setText("")
         clearAttach()
 
+        runAsk(chat, spoken)
+    }
+
+    private fun runAsk(chat: Chat, spoken: Boolean) {
+        models = ArrayList(Store.models(this))
         val active = Store.active(this)
         val name = models.getOrNull(active)?.name ?: "Prabhu"
-        val thinking = assistantView(name, "Thinking…", true)
+        val thinking = assistantView(name, "", true)
         msgList.addView(thinking)
         scrollDown()
         busy = true
+        input.hint = "Prabhu is thinking…"
         tts?.stop()
 
         val fb = Store.bool(this, "fallback", true)
@@ -593,16 +821,26 @@ class MainActivity : Activity() {
 
     private fun onReply(chat: Chat, thinking: View, r: Ai.Result, spoken: Boolean) {
         busy = false
+        input.hint = "Message Prabhu"
         msgList.removeView(thinking)
         if (r.ok) {
-            val m = Msg("assistant", r.text, r.used)
-            chat.msgs.add(m)
+            chat.msgs.add(Msg("assistant", r.text, r.used))
             Store.saveChats(this, chats)
-            if (cur === chat) { addMsgView(m); scrollDown() }
+            if (cur === chat) renderChat()
             if (spoken || Store.bool(this, "speak", false)) speak(r.text)
         } else if (cur === chat) {
-            addError(r.text)
+            addError(r.text, chat, spoken)
         }
+    }
+
+    private fun regenerate() {
+        val c = cur ?: return
+        if (busy) return
+        if (c.msgs.lastOrNull()?.role == "assistant") c.msgs.removeAt(c.msgs.lastIndex)
+        if (c.msgs.lastOrNull()?.role != "user") return
+        Store.saveChats(this, chats)
+        renderChat()
+        runAsk(c, false)
     }
 
     private fun speak(text: String) {
@@ -710,6 +948,7 @@ class MainActivity : Activity() {
     }
 
     private fun refreshAttachBar() {
+        updateSendState()
         if (pendingAtts.isEmpty()) { attachBar.visibility = View.GONE; return }
         val th = pendingAtts.firstOrNull { it.thumb != null }?.thumb
         if (th != null) { attachImg.setImageBitmap(th); attachImg.visibility = View.VISIBLE }
@@ -721,6 +960,7 @@ class MainActivity : Activity() {
     private fun clearAttach() {
         pendingAtts.clear()
         attachBar.visibility = View.GONE
+        updateSendState()
     }
 
     private fun displayName(uri: Uri): String {
