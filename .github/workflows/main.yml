@@ -11,13 +11,15 @@ jobs:
       - uses: actions/checkout@v4
       - name: Unpack an uploaded project zip (if there is one)
         run: |
-          Z=$(ls -1 *.zip 2>/dev/null | head -n1 || true)
+          # take the NEWEST version zip (v2_9_2 beats v2_7), then remove every zip so old ones never get built
+          Z=$(ls -1 *.zip 2>/dev/null | sort -V | tail -n1 || true)
           if [ -n "$Z" ]; then
             rm -rf /tmp/up && mkdir /tmp/up && unzip -q "$Z" -d /tmp/up
             S=$(find /tmp/up -name settings.gradle.kts | head -n1)
             R=$(dirname "$S")
             rsync -a --exclude='.github' "$R"/ ./
-            rm -f "$Z"
+            echo "Building from: $Z"
+            rm -f ./*.zip
             git config user.name "prabhu-bot"
             git config user.email "prabhu-bot@users.noreply.github.com"
             git add -A
