@@ -745,6 +745,9 @@ class MainActivity : Activity() {
         act("⧉ Copy") { copyText(text) }
         act("🔊 Listen") { if (tts?.isSpeaking == true) tts?.stop() else speak(text) }
         act("⇪ Share") { shareText(text) }
+        if (Store.igToken(this).isNotBlank() && Store.igAccountId(this).isNotBlank()) {
+            act("📸 Post to IG") { postToInstagram(text) }
+        }
         if (last) act("↻ Retry") { regenerate() }
         return row
     }
