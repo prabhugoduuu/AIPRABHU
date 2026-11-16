@@ -54,6 +54,12 @@ private const val PERM_MEDIA = 202
 private const val PERM_CAM_NOW = 203
 private val cUserBg = 0xFF2A3860.toInt()
 private val cDanger = 0x1FFF7B7B
+private val cBg = Color.WHITE
+private val cSurface = 0xFFF5F5F5.toInt()
+private val cSurface2 = 0xFFF0F2F5.toInt()
+private val cText = 0xFF111111.toInt()
+private val cMute = 0xFF666666.toInt()
+private val cLine = 0xFFE0E0E0.toInt()
 
 class MainActivity : Activity() {
 
