@@ -107,6 +107,11 @@ object Store {
     fun lang(c: Context): String = sp(c).getString("lang", "te-IN")!!
     fun setLang(c: Context, v: String) = sp(c).edit().putString("lang", v).apply()
 
+    fun igToken(c: Context): String = sp(c).getString("ig_token", "") ?: ""
+    fun setIgToken(c: Context, v: String) = sp(c).edit().putString("ig_token", v).apply()
+    fun igAccountId(c: Context): String = sp(c).getString("ig_account_id", "") ?: ""
+    fun setIgAccountId(c: Context, v: String) = sp(c).edit().putString("ig_account_id", v).apply()
+
     fun loadChats(c: Context): MutableList<Chat> {
         val f = File(c.filesDir, "chats.json")
         val out = ArrayList<Chat>()
