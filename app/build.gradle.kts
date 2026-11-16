@@ -11,8 +11,8 @@ android {
         applicationId = "com.prabhu.assistant"
         minSdk = 26
         targetSdk = 34
-        versionCode = 101
-        versionName = "2.5"
+        versionCode = 102
+        versionName = "2.6"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

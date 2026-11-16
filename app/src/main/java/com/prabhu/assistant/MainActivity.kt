@@ -291,6 +291,34 @@ class MainActivity : Activity() {
         } catch (e: Exception) { }
     }
 
+    private fun postToInstagram(text: String) {
+        val token = Store.igToken(this)
+        val accountId = Store.igAccountId(this)
+        if (token.isNotBlank() && accountId.isNotBlank()) {
+            toast("Posting to Instagram...")
+            Thread {
+                try {
+                    val url = java.net.URL("https://graph.facebook.com/v18.0/$accountId/media?caption=${java.net.URLEncoder.encode(text, "UTF-8")}&access_token=$token")
+                    val conn = url.openConnection() as java.net.HttpURLConnection
+                    conn.requestMethod = "POST"
+                    val code = conn.responseCode
+                    runOnUiThread {
+                        if (code in 200..299) toast("Posted to Instagram!")
+                        else toast("Instagram post failed ($code)")
+                    }
+                } catch (e: Exception) {
+                    runOnUiThread { toast("Instagram error: ${e.localizedMessage}") }
+                }
+            }.start()
+        } else {
+            try {
+                startActivity(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text).setPackage("com.instagram.android"))
+            } catch (e: Exception) {
+                shareText(text)
+            }
+        }
+    }
+
     private fun hideKeyboard() {
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(root.windowToken, 0)
     }
