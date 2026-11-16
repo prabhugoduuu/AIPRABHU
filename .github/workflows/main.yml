@@ -9,10 +9,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - name: Unpack an uploaded project zip (if there is one)
         run: |
-          # take the NEWEST version zip (v2_9_2 beats v2_7), then remove every zip so old ones never get built
-          Z=$(ls -1 *.zip 2>/dev/null | sort -V | tail -n1 || true)
+          # only a zip that was JUST uploaded in this commit is unpacked, so old zips can never overwrite newer code
+          Z=$(git diff --name-only --diff-filter=A HEAD~1 HEAD -- '*.zip' 2>/dev/null | sort -V | tail -n1 || true)
           if [ -n "$Z" ]; then
             rm -rf /tmp/up && mkdir /tmp/up && unzip -q "$Z" -d /tmp/up
             S=$(find /tmp/up -name settings.gradle.kts | head -n1)
